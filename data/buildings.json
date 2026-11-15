@@ -1,0 +1,142 @@
+[
+  {
+    "id": "klaus",
+    "name": "Klaus Advanced Computing Building",
+    "number": "156",
+    "type": "academic",
+    "manager": "klaus-manager@demo.buzzfix",
+    "lat": 33.77719,
+    "lng": -84.39574,
+    "aliases": ["klaus", "kacb", "advanced computing"]
+  },
+  {
+    "id": "culc",
+    "name": "Clough Undergraduate Learning Commons",
+    "number": "165",
+    "type": "academic",
+    "manager": "clough-manager@demo.buzzfix",
+    "lat": 33.77489,
+    "lng": -84.39637,
+    "aliases": ["clough", "culc", "crc bridge", "learning commons"]
+  },
+  {
+    "id": "library",
+    "name": "Price Gilbert Library / Crosland Tower",
+    "number": "177",
+    "type": "academic",
+    "manager": "library-manager@demo.buzzfix",
+    "lat": 33.77437,
+    "lng": -84.39565,
+    "aliases": ["library", "price gilbert", "crosland"]
+  },
+  {
+    "id": "coc",
+    "name": "College of Computing Building",
+    "number": "116",
+    "type": "academic",
+    "manager": "coc-manager@demo.buzzfix",
+    "lat": 33.77751,
+    "lng": -84.39738,
+    "aliases": ["coc", "college of computing"]
+  },
+  {
+    "id": "howey",
+    "name": "Howey Physics Building",
+    "number": "81",
+    "type": "academic",
+    "manager": "howey-manager@demo.buzzfix",
+    "lat": 33.77757,
+    "lng": -84.39846,
+    "aliases": ["howey", "physics"]
+  },
+  {
+    "id": "skiles",
+    "name": "Skiles Classroom Building",
+    "number": "103",
+    "type": "academic",
+    "manager": "skiles-manager@demo.buzzfix",
+    "lat": 33.77385,
+    "lng": -84.39543,
+    "aliases": ["skiles"]
+  },
+  {
+    "id": "vanleer",
+    "name": "Van Leer Building (ECE)",
+    "number": "85",
+    "type": "academic",
+    "manager": "vanleer-manager@demo.buzzfix",
+    "lat": 33.77604,
+    "lng": -84.39717,
+    "aliases": ["van leer", "ece"]
+  },
+  {
+    "id": "studentcenter",
+    "name": "John Lewis Student Center",
+    "number": "118",
+    "type": "student_center",
+    "manager": "studentcenter@demo.buzzfix",
+    "lat": 33.77388,
+    "lng": -84.39894,
+    "aliases": ["student center", "john lewis", "stamps commons"]
+  },
+  {
+    "id": "crc",
+    "name": "Campus Recreation Center (CRC)",
+    "number": "173",
+    "type": "student_center",
+    "manager": "crc-manager@demo.buzzfix",
+    "lat": 33.77564,
+    "lng": -84.40365,
+    "aliases": ["crc", "rec center", "recreation"]
+  },
+  {
+    "id": "northave",
+    "name": "North Avenue Apartments",
+    "number": "NAA",
+    "type": "residence",
+    "manager": "housing-helpdesk@demo.buzzfix",
+    "lat": 33.77023,
+    "lng": -84.39157,
+    "aliases": ["north ave", "naa", "north avenue"]
+  },
+  {
+    "id": "glenn",
+    "name": "Glenn Hall",
+    "number": "GH",
+    "type": "residence",
+    "manager": "housing-helpdesk@demo.buzzfix",
+    "lat": 33.77293,
+    "lng": -84.39143,
+    "aliases": ["glenn"]
+  },
+  {
+    "id": "towers",
+    "name": "Towers Hall",
+    "number": "TH",
+    "type": "residence",
+    "manager": "housing-helpdesk@demo.buzzfix",
+    "lat": 33.77256,
+    "lng": -84.39078,
+    "aliases": ["towers"]
+  },
+  {
+    "id": "westvillage",
+    "name": "West Village Dining Commons",
+    "number": "WV",
+    "type": "residence",
+    "manager": "housing-helpdesk@demo.buzzfix",
+    "lat": 33.77929,
+    "lng": -84.40432,
+    "aliases": ["west village", "wv dining"]
+  },
+  {
+    "id": "tech-green",
+    "name": "Tech Green (outdoor)",
+    "number": "OUT",
+    "type": "outdoor",
+    "manager": "landscaping@demo.buzzfix",
+    "lat": 33.77462,
+    "lng": -84.39720,
+    "aliases": ["tech green", "green", "outdoor", "campanile"]
+  }
+]

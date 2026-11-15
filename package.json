@@ -1,0 +1,16 @@
+{
+  "name": "buzzfix",
+  "version": "0.1.0",
+  "description": "BuzzFix — report a broken thing at Georgia Tech by sending one photo. AI classifies, routes, and tracks it.",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BuzzFix — Facilities Dashboard</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<style>
+  :root{
+    --navy:#003057; --gold:#B3A369; --bg:#f4f2ec; --card:#fff; --ink:#1b2430; --muted:#5b6673;
+    --ok:#1f8a4c; --warn:#c77700; --bad:#c0392b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){ --bg:#0c1420; --card:#132032; --ink:#eef2f7; --muted:#9aa7b5; }
+  }
+  :root[data-theme="dark"]{ --bg:#0c1420; --card:#132032; --ink:#eef2f7; --muted:#9aa7b5; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif}
+  header{background:var(--navy);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0}
+  header h1 span{color:var(--gold)}
+  .stats{display:flex;gap:16px;margin-left:auto;font-size:13px}
+  .stats b{font-size:18px;display:block;color:var(--gold)}
+  nav{display:flex;gap:4px;padding:12px 20px 0}
+  nav button{border:0;background:transparent;color:var(--muted);font:600 14px inherit;padding:8px 14px;border-radius:10px 10px 0 0;cursor:pointer}
+  nav button.on{background:var(--card);color:var(--ink)}
+  main{padding:0 20px 40px}
+  .panel{background:var(--card);border-radius:0 14px 14px 14px;padding:16px;min-height:420px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+  .r{border:1px solid rgba(120,130,150,.2);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+  .r img{width:100%;height:140px;object-fit:cover;border-radius:8px}
+  .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .pill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(120,130,150,.15)}
+  .pill.em{background:var(--bad);color:#fff}.pill.high{background:var(--warn);color:#fff}
+  .pill.reported{background:#3867d6;color:#fff}.pill.in_progress{background:var(--warn);color:#fff}.pill.resolved{background:var(--ok);color:#fff}
+  .tk{font:700 12px ui-monospace,Menlo,monospace;color:var(--gold)}
+  .t{font-weight:700}
+  .m{color:var(--muted);font-size:13px}
+  select.st{border:1px solid rgba(120,130,150,.3);background:transparent;color:var(--ink);border-radius:8px;padding:5px;font:inherit;font-size:13px}
+  .up{margin-left:auto;font-weight:800}
+  #map{height:520px;border-radius:12px}
+  .mail{border:1px solid rgba(120,130,150,.2);border-radius:12px;padding:14px;margin-bottom:12px}
+  .mail .to{font-weight:700}
+  .mail pre{white-space:pre-wrap;font:13px ui-monospace,Menlo,monospace;background:rgba(120,130,150,.08);padding:10px;border-radius:8px}
+  .filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+  .filters select{border:1px solid rgba(120,130,150,.3);background:var(--card);color:var(--ink);border-radius:8px;padding:6px;font:inherit}
+</style>
+</head>
+<body>
+<header>
+  <h1>🐝 Buzz<span>Fix</span> — Facilities Dashboard</h1>
+  <div class="stats">
+    <div><b id="s-open">0</b>open</div>
+    <div><b id="s-today">0</b>today</div>
+    <div><b id="s-up">0</b>people affected</div>
+  </div>
+</header>
+<nav>
+  <button class="on" data-tab="issues">Issues</button>
+  <button data-tab="map">Map</button>
+  <button data-tab="outbox">Outbox</button>
+</nav>
+<main>
+  <div class="panel" id="p-issues">
+    <div class="filters">
+      <select id="f-status"><option value="">All statuses</option><option>reported</option><option>in_progress</option><option>resolved</option><option>emergency</option></select>
+      <select id="f-cat"><option value="">All categories</option></select>
+    </div>
+    <div class="grid" id="list"></div>
+  </div>
+  <div class="panel" id="p-map" style="display:none"><div id="map"></div></div>
+  <div class="panel" id="p-outbox" style="display:none"><div id="outbox"></div></div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const $ = (s)=>document.querySelector(s);
+let reports = [], map, layer;
+
+document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("nav button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on");
+  for (const t of ["issues","map","outbox"]) $("#p-"+t).style.display = (b.dataset.tab===t) ? "" : "none";
+  if (b.dataset.tab==="map") setTimeout(initMap, 50);
+}));
+
+async function load(){
+  reports = await (await fetch("/api/reports")).json();
+  const open = reports.filter(r=>r.status!=="resolved");
+  $("#s-open").textContent = open.length;
+  $("#s-today").textContent = reports.filter(r=>new Date(r.createdAt).toDateString()===new Date().toDateString()).length;
+  $("#s-up").textContent = reports.reduce((a,r)=>a+r.upvotes,0);
+  const cats = [...new Set(reports.map(r=>r.category))];
+  const fc = $("#f-cat");
+  const cur = fc.value;
+  fc.innerHTML = '<option value="">All categories</option>' + cats.map(c=>`<option ${c===cur?"selected":""}>${c}</option>`).join("");
+  renderList();
+  if (map) renderMarkers();
+  renderOutbox();
+}
+
+function renderList(){
+  const fs = $("#f-status").value, fcat = $("#f-cat").value;
+  const rs = reports.filter(r=>(!fs||r.status===fs)&&(!fcat||r.category===fcat));
+  $("#list").innerHTML = rs.map(r=>`
+    <div class="r">
+      ${r.photo?`<img src="${r.photo}" alt="">`:""}
+      <div class="row"><span class="tk">${r.id}</span><span class="pill ${r.status}">${r.status.replace("_"," ")}</span>
+        <span class="pill ${r.urgency==="emergency"?"em":r.urgency==="high"?"high":""}">${r.urgency}</span><span class="up">▲ ${r.upvotes}</span></div>
+      <div class="t">${r.title}</div>
+      <div class="m">${r.building? r.building.name + (r.building.number?` · Bldg ${r.building.number}`:"") : "Unknown building"}${r.location?` · ${r.location}`:""}</div>
+      <div class="m">${r.summary}</div>
+      <div class="row">
+        <span class="pill">${r.category}</span>
+        <select class="st" onchange="setStatus('${r.id}',this.value)">
+          ${["reported","in_progress","resolved"].map(s=>`<option ${r.status===s?"selected":""}>${s}</option>`).join("")}
+        </select>
+        <span class="m" style="margin-left:auto">${new Date(r.createdAt).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</span>
+      </div>
+    </div>`).join("") || '<p class="m">No reports yet. Submit one from the report page.</p>';
+}
+
+async function setStatus(id, status){
+  await fetch(`/api/reports/${id}/status`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});
+  load();
+}
+
+function initMap(){
+  if (map){ map.invalidateSize(); return; }
+  map = L.map("map").setView([33.7756,-84.3963], 15);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap"}).addTo(map);
+  layer = L.layerGroup().addTo(map);
+  renderMarkers();
+}
+
+function renderMarkers(){
+  layer.clearLayers();
+  for (const r of reports.filter(r=>r.building && r.status!=="resolved")){
+    const color = r.urgency==="emergency" ? "#c0392b" : r.urgency==="high" ? "#c77700" : "#003057";
+    L.circleMarker([r.building.lat, r.building.lng], {radius: 8 + Math.min(r.upvotes*2,14), color, fillColor:color, fillOpacity:.75})
+      .bindPopup(`<b>${r.title}</b><br>${r.building.name}<br>▲ ${r.upvotes} · ${r.category} · ${r.status}`)
+      .addTo(layer);
+  }
+}
+
+async function renderOutbox(){
+  const mails = await (await fetch("/api/outbox")).json();
+  $("#outbox").innerHTML = mails.map(m=>`
+    <div class="mail">
+      <div class="to">To: ${m.to}</div>
+      <div class="m">Subject: ${m.subject}</div>
+      <pre>${m.body}</pre>
+    </div>`).join("") || '<p class="m">Outbox empty — routed emails will appear here. (Demo mode: emails are staged, not sent.)</p>';
+}
+
+$("#f-status").addEventListener("change", renderList);
+$("#f-cat").addEventListener("change", renderList);
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>
