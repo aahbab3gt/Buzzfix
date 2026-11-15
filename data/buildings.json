@@ -27,7 +27,7 @@
     "manager": "library-manager@demo.buzzfix",
     "lat": 33.77437,
     "lng": -84.39565,
-    "aliases": ["library", "price gilbert", "crosland"]
+    "aliases": ["library", "price gilbert", "crosland", "pg", "purple zone", "pg purple zone", "library purple zone"]
   },
   {
     "id": "coc",
@@ -138,5 +138,45 @@
     "lat": 33.77462,
     "lng": -84.39720,
     "aliases": ["tech green", "green", "outdoor", "campanile"]
+  },
+  {
+    "id": "parking-purple",
+    "name": "Parking Zone 5 (Purple Zone - West Campus)",
+    "number": "W-ZONE",
+    "type": "outdoor",
+    "manager": "parking@demo.buzzfix",
+    "lat": 33.7798,
+    "lng": -84.4048,
+    "aliases": ["purple zone", "purple", "zone 5", "west campus parking", "currier deck", "w23"]
+  },
+  {
+    "id": "parking-gold",
+    "name": "Parking Zone 1 (Gold Zone - East Campus)",
+    "number": "E-ZONE",
+    "type": "outdoor",
+    "manager": "parking@demo.buzzfix",
+    "lat": 33.7720,
+    "lng": -84.3920,
+    "aliases": ["gold zone", "gold", "zone 1", "east campus parking", "peters deck", "techwood"]
+  },
+  {
+    "id": "parking-red",
+    "name": "Parking Zone 2 (Red Zone - North Campus)",
+    "number": "N-ZONE",
+    "type": "outdoor",
+    "manager": "parking@demo.buzzfix",
+    "lat": 33.7785,
+    "lng": -84.3960,
+    "aliases": ["red zone", "red", "zone 2", "north campus parking", "klaus deck"]
+  },
+  {
+    "id": "parking-blue",
+    "name": "Parking Zone 3 (Blue Zone - Central Campus)",
+    "number": "C-ZONE",
+    "type": "outdoor",
+    "manager": "parking@demo.buzzfix",
+    "lat": 33.7750,
+    "lng": -84.4000,
+    "aliases": ["blue zone", "blue", "zone 3", "central campus parking", "ferst deck"]
   }
 ]

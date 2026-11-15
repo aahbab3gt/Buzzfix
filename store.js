@@ -58,6 +58,32 @@ export function getOutbox() {
   return db.outbox;
 }
 
+// User Notification Preferences (Opt-in / Opt-out)
+export function optOut(phone) {
+  if (!db.optOuts) db.optOuts = [];
+  if (phone && !db.optOuts.includes(phone)) {
+    db.optOuts.push(phone);
+    save();
+  }
+  return true;
+}
+
+export function optIn(phone) {
+  if (!db.optOuts) return true;
+  db.optOuts = db.optOuts.filter((p) => p !== phone);
+  save();
+  return true;
+}
+
+export function isOptedOut(phone) {
+  if (!phone) return false;
+  return Array.isArray(db.optOuts) && db.optOuts.includes(phone);
+}
+
+export function getOptOuts() {
+  return db.optOuts || [];
+}
+
 // Duplicate = same building + same category, still open, within windowHours.
 export function findDuplicate(buildingId, category, windowHours = 72) {
   const cutoff = Date.now() - windowHours * 3600 * 1000;
@@ -68,4 +94,9 @@ export function findDuplicate(buildingId, category, windowHours = 72) {
       r.status !== "resolved" &&
       new Date(r.createdAt).getTime() > cutoff
   );
+}
+
+export function getLatestReportBySender(phone) {
+  if (!phone) return null;
+  return db.reports.find((r) => r.sender === phone);
 }

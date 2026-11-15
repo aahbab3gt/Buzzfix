@@ -28,7 +28,10 @@
   .panel{background:var(--card);border-radius:0 14px 14px 14px;padding:16px;min-height:420px}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
   .r{border:1px solid rgba(120,130,150,.2);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
-  .r img{width:100%;height:140px;object-fit:cover;border-radius:8px}
+  .r .img-wrap{position:relative;width:100%;height:220px;border-radius:10px;overflow:hidden;background:#000;cursor:pointer}
+  .r .img-wrap img{width:100%;height:100%;object-fit:cover;transition:transform .25s ease,opacity .2s}
+  .r .img-wrap:hover img{transform:scale(1.04);opacity:.92}
+  .r .img-badge{position:absolute;bottom:8px;right:8px;background:rgba(0,16,40,.75);color:#fff;font-size:11px;font-weight:700;padding:4px 9px;border-radius:6px;backdrop-filter:blur(4px);pointer-events:none;border:1px solid rgba(255,255,255,.2)}
   .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   .pill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(120,130,150,.15)}
   .pill.em{background:var(--bad);color:#fff}.pill.high{background:var(--warn);color:#fff}
@@ -44,9 +47,21 @@
   .mail pre{white-space:pre-wrap;font:13px ui-monospace,Menlo,monospace;background:rgba(120,130,150,.08);padding:10px;border-radius:8px}
   .filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
   .filters select{border:1px solid rgba(120,130,150,.3);background:var(--card);color:var(--ink);border-radius:8px;padding:6px;font:inherit}
+  .toast{position:fixed;bottom:24px;right:24px;background:#003057;color:#fff;padding:12px 20px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.2);display:none;z-index:9999;font-weight:600;font-size:14px;border:1.5px solid #B3A369}
+  .lightbox{display:none;position:fixed;inset:0;background:rgba(0,10,25,.92);backdrop-filter:blur(8px);z-index:99999;cursor:zoom-out;align-items:center;justify-content:center;flex-direction:column;padding:24px}
+  .lightbox.open{display:flex}
+  .lightbox img{max-width:92vw;max-height:86vh;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.8);object-fit:contain;cursor:default}
+  .lightbox-close{position:absolute;top:20px;right:24px;color:#fff;font-size:36px;font-weight:700;cursor:pointer;line-height:1}
+  .lightbox-caption{color:#eef2f7;font-size:14px;font-weight:600;margin-top:14px;text-align:center}
 </style>
 </head>
 <body>
+<div class="toast" id="toast"></div>
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <span class="lightbox-close">&times;</span>
+  <img id="lightbox-img" src="" alt="Full view" onclick="event.stopPropagation()">
+  <div class="lightbox-caption" id="lightbox-caption"></div>
+</div>
 <header>
   <h1>🐝 Buzz<span>Fix</span> — Facilities Dashboard</h1>
   <div class="stats">
@@ -102,9 +117,15 @@ async function load(){
 function renderList(){
   const fs = $("#f-status").value, fcat = $("#f-cat").value;
   const rs = reports.filter(r=>(!fs||r.status===fs)&&(!fcat||r.category===fcat));
-  $("#list").innerHTML = rs.map(r=>`
+  $("#list").innerHTML = rs.map(r=>{
+    const imgUrl = r.photo || (r.photos && r.photos.length > 0 ? r.photos[r.photos.length - 1] : null);
+    return `
     <div class="r">
-      ${r.photo?`<img src="${r.photo}" alt="">`:""}
+      ${imgUrl?`
+      <div class="img-wrap" onclick="openLightbox('${imgUrl}', '${r.id} · ${(r.title||'').replace(/'/g, "\\'")}')">
+        <img src="${imgUrl}" alt="${r.title}">
+        <span class="img-badge">🔍 Click to zoom</span>
+      </div>`:""}
       <div class="row"><span class="tk">${r.id}</span><span class="pill ${r.status}">${r.status.replace("_"," ")}</span>
         <span class="pill ${r.urgency==="emergency"?"em":r.urgency==="high"?"high":""}">${r.urgency}</span><span class="up">▲ ${r.upvotes}</span></div>
       <div class="t">${r.title}</div>
@@ -117,11 +138,35 @@ function renderList(){
         </select>
         <span class="m" style="margin-left:auto">${new Date(r.createdAt).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}</span>
       </div>
-    </div>`).join("") || '<p class="m">No reports yet. Submit one from the report page.</p>';
+    </div>`;
+  }).join("") || '<p class="m">No reports yet. Submit one from the report page.</p>';
+}
+
+function openLightbox(src, caption){
+  $("#lightbox-img").src = src;
+  $("#lightbox-caption").textContent = caption;
+  $("#lightbox").classList.add("open");
+}
+
+function closeLightbox(){
+  $("#lightbox").classList.remove("open");
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeLightbox();
+});
+
+function showToast(msg){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=> t.style.display = "none", 4500);
 }
 
 async function setStatus(id, status){
   await fetch(`/api/reports/${id}/status`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});
+  showToast(`✅ ${id} status updated to ${status.replace("_"," ").toUpperCase()} · Live SMS sent!`);
   load();
 }
 

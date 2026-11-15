@@ -75,7 +75,7 @@ export async function classify({ text, photoPath, photoMime }) {
   try {
     const { GoogleGenAI } = await import("@google/genai");
     const ai = new GoogleGenAI({ apiKey: key });
-    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 
     const parts = [];
     if (photoPath && fs.existsSync(photoPath)) {
