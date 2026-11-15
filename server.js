@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import twilio from "twilio";
 import exifParser from "exif-parser";
 import { classify, GEMINI_MODEL, GEMINI_ENABLED } from "./classify.js";
+import { nearestBuilding, parseLatLng, reverseGeocode, mapsLink } from "./geo.js";
 import { route, draftEmail, emergencyContacts } from "./routing.js";
 import {
   nextTicket,
@@ -65,31 +66,44 @@ function extractExifGps(filePath) {
   return null;
 }
 
-function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371e3;
-  const toRad = (x) => (x * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
+function slimBuilding(b) {
+  return b ? { id: b.id, name: b.name, number: b.number, type: b.type, lat: b.lat, lng: b.lng } : null;
 }
 
-function matchBuildingByCoordinates(lat, lng, maxDistanceMeters = 400) {
-  let closest = null;
-  let minDistance = Infinity;
-  for (const b of buildings) {
-    if (typeof b.lat === "number" && typeof b.lng === "number") {
-      const dist = haversineDistanceMeters(lat, lng, b.lat, b.lng);
-      if (dist < minDistance) {
-        minDistance = dist;
-        closest = { building: b, distanceMeters: Math.round(dist) };
-      }
-    }
+// Resolve a GPS fix into everything the dashboard needs: nearest building, distance, street address.
+// Priority of GPS sources: browser/WhatsApp pin (fresh, accurate) > EXIF (often stripped by carriers).
+async function resolveLocation(gps) {
+  if (!gps) return null;
+  const near = nearestBuilding(buildings, gps.lat, gps.lng);
+  const geo = await reverseGeocode(gps.lat, gps.lng);
+  return {
+    gps,
+    nearest: near ? { ...slimBuilding(near.building), distanceMeters: near.distanceMeters } : null,
+    address: geo?.short || null,
+    addressFull: geo?.full || null,
+    mapsUrl: mapsLink(gps.lat, gps.lng),
+  };
+}
+
+// Apply a resolved location onto a report (mutates). Only overrides the building if the report
+// had none, or only had a GPS pin / text guess, so an explicit building choice always wins.
+function applyLocation(report, loc, { overrideBuilding = false } = {}) {
+  if (!loc) return report;
+  report.gps = loc.gps;
+  report.address = loc.address;
+  report.addressFull = loc.addressFull;
+  report.mapsUrl = loc.mapsUrl;
+  report.nearestBuilding = loc.nearest;
+  const weakBuilding = !report.building || report.building.id === "gps-pin" || report.buildingSource === "text";
+  if (loc.nearest && (overrideBuilding || weakBuilding)) {
+    const { distanceMeters, ...b } = loc.nearest;
+    report.building = b;
+    report.buildingSource = "gps";
+  } else if (!report.building) {
+    report.building = { id: "gps-pin", name: loc.address || "Pinned location", number: "", type: "outdoor", lat: loc.gps.lat, lng: loc.gps.lng };
+    report.buildingSource = "gps";
   }
-  return closest && closest.distanceMeters <= maxDistanceMeters ? closest.building : null;
+  return report;
 }
 
 function matchBuilding(input) {
@@ -126,6 +140,7 @@ async function processReport({
   photoUrl = null,
   source = "web",
   sender = null,
+  gps = null, // { lat, lng, accuracy, source: "browser" | "whatsapp" }
 }) {
   const combinedText = `${text} ${location}`.trim();
   const ai = await classify({
@@ -134,9 +149,18 @@ async function processReport({
     photoMime,
   });
 
+  // GPS: a live fix (browser / WhatsApp pin) beats EXIF, which carriers usually strip anyway.
   const exifGps = extractExifGps(photoPath);
-  const gpsBuilding = exifGps ? matchBuildingByCoordinates(exifGps.lat, exifGps.lng) : null;
-  const building = matchBuilding(buildingId) || matchBuilding(text) || matchBuilding(ai.building_guess) || gpsBuilding;
+  const fix = gps || (exifGps ? { ...exifGps, accuracy: null, source: "exif" } : null);
+  const loc = await resolveLocation(fix);
+
+  // Building precedence: explicit pick > GPS within 400 m > text/AI guess.
+  let building = null;
+  let buildingSource = null;
+  if (matchBuilding(buildingId)) { building = matchBuilding(buildingId); buildingSource = "user"; }
+  else if (loc?.nearest) { building = buildings.find((b) => b.id === loc.nearest.id); buildingSource = "gps"; }
+  else if (matchBuilding(text)) { building = matchBuilding(text); buildingSource = "text"; }
+  else if (matchBuilding(ai.building_guess)) { building = matchBuilding(ai.building_guess); buildingSource = "ai"; }
 
   // Emergencies: don't file a form — tell them who to call RIGHT NOW (and still log it).
   const isEmergency = ai.urgency === "emergency";
@@ -183,14 +207,17 @@ async function processReport({
     source,
     sender,
     subscribers: sender ? [sender] : [],
-    gps: exifGps || null,
-    building: building
-      ? { id: building.id, name: building.name, number: building.number, type: building.type, lat: building.lat, lng: building.lng }
-      : (exifGps ? { id: "gps-pin", name: "Photo GPS Location", number: "", type: "outdoor", lat: exifGps.lat, lng: exifGps.lng } : null),
+    gps: null,
+    address: null,
+    mapsUrl: null,
+    nearestBuilding: null,
+    building: slimBuilding(building),
+    buildingSource,
     photo: photoUrl,
     photos: photoUrl ? [photoUrl] : [],
     upvotes: 1,
   };
+  applyLocation(report, loc);
   addReport(report);
 
   let routed = null;
@@ -214,8 +241,9 @@ async function processReport({
 
 // Web report endpoint
 app.post("/api/report", upload.single("photo"), async (req, res) => {
-  const { text = "", buildingId = "", location = "" } = req.body;
+  const { text = "", buildingId = "", location = "", lat, lng, accuracy } = req.body;
   const photoUrl = req.file ? `/uploads/${req.file.filename}` : null;
+  const browserFix = parseLatLng(lat, lng, accuracy);
 
   const result = await processReport({
     text,
@@ -225,6 +253,7 @@ app.post("/api/report", upload.single("photo"), async (req, res) => {
     photoMime: req.file?.mimetype,
     photoUrl,
     source: "web",
+    gps: browserFix ? { ...browserFix, source: "browser" } : null,
   });
 
   res.json({
@@ -371,13 +400,33 @@ Report ${recent.id} is now pinned on the facilities map.</Message>
       }
     }
 
+    // WhatsApp location shares arrive as Latitude/Longitude params (SMS has no equivalent).
+    const waPin = parseLatLng(req.body.Latitude, req.body.Longitude);
+
+    // A bare location share with no text/photo = "pin my last report here".
+    if (waPin && numMedia === 0 && trimmed.length === 0) {
+      const recent = getLatestReportBySender(fromNumber);
+      const isRecent = recent && Date.now() - new Date(recent.createdAt).getTime() < 20 * 60 * 1000;
+      if (recent && isRecent) {
+        const loc = await resolveLocation({ ...waPin, source: "whatsapp" });
+        applyLocation(recent, loc, { overrideBuilding: recent.buildingSource !== "user" });
+        updateReport(recent.id, recent);
+        res.type("text/xml");
+        return res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Message>${escapeXml(`🐝 [BuzzFix] Location pinned!\n📍 ${recent.address || recent.building?.name || "Pinned on map"}${recent.nearestBuilding && recent.address ? `\n🏛 ${recent.nearestBuilding.name} (${recent.nearestBuilding.distanceMeters} m away)` : ""}\nReport ${recent.id} updated for technicians.`)}</Message>
+</Response>`);
+      }
+    }
+
     const result = await processReport({
       text: bodyText,
       photoPath,
       photoMime,
       photoUrl,
-      source: "sms",
+      source: fromNumber.startsWith("whatsapp:") ? "whatsapp" : "sms",
       sender: fromNumber,
+      gps: waPin ? { ...waPin, source: "whatsapp" } : null,
     });
 
     const photoLink = `${baseUrlFor(req)}/add-photo?id=${result.ticket}`;
@@ -392,17 +441,17 @@ Report ${recent.id} is now pinned on the facilities map.</Message>
                  `📸 Add photo for tech: ${photoLink}`;
     } else {
       const bldgStr = result.building
-        ? `${result.building.name}${result.building.number ? ` (Bldg #${result.building.number})` : ""}`
+        ? `${result.building.name}${result.building.number ? ` (Bldg #${result.building.number})` : ""}${result.report.address ? ` · ${result.report.address}` : ""}`
         : "GT Campus (Building unassigned)";
-      const bldgPrompt = !result.building
-        ? `\n💡 Reply with your building or room # to pinpoint on the map!`
+      const bldgPrompt = !result.report.gps
+        ? `\n💡 Tap the link below to pin your exact location, or reply with the building name.`
         : "";
       replyMsg = `🐝 [BuzzFix] Report ${result.ticket} logged!\n` +
                  `📍 ${bldgStr}\n` +
                  `🔧 ${result.report.title}\n` +
                  `Status: REPORTED (technicians notified)${bldgPrompt}\n` +
                  `We'll text you when there is an update! (Reply STOP to opt out)\n` +
-                 `📸 Snap photo for tech:\n${photoLink}`;
+                 `📸 Pin location / add photo:\n${photoLink}`;
     }
 
     res.type("text/xml");
@@ -440,6 +489,18 @@ app.get("/api/reports/:id", (req, res) => {
   res.json(r);
 });
 
+// Pin a location onto an existing ticket (from the /add-photo page's geolocation, no photo needed).
+app.post("/api/reports/:id/location", async (req, res) => {
+  const r = getReport(req.params.id);
+  if (!r) return res.status(404).json({ error: "Ticket not found" });
+  const fix = parseLatLng(req.body.lat, req.body.lng, req.body.accuracy);
+  if (!fix) return res.status(400).json({ error: "lat/lng required" });
+  const loc = await resolveLocation({ ...fix, source: "browser" });
+  applyLocation(r, loc, { overrideBuilding: r.buildingSource !== "user" });
+  updateReport(r.id, r);
+  res.json({ ok: true, report: r });
+});
+
 app.post("/api/reports/:id/photo", upload.single("photo"), async (req, res) => {
   const r = getReport(req.params.id);
   if (!r) return res.status(404).json({ error: "Ticket not found" });
@@ -449,6 +510,14 @@ app.post("/api/reports/:id/photo", upload.single("photo"), async (req, res) => {
   r.photo = photoUrl;
   if (!r.photos) r.photos = [];
   r.photos.push(photoUrl);
+
+  // Location can ride along with the photo (browser GPS first, EXIF as a fallback).
+  const fix = parseLatLng(req.body.lat, req.body.lng, req.body.accuracy);
+  const exif = fix ? null : extractExifGps(req.file.path);
+  if (fix || exif) {
+    const loc = await resolveLocation(fix ? { ...fix, source: "browser" } : { ...exif, accuracy: null, source: "exif" });
+    applyLocation(r, loc, { overrideBuilding: r.buildingSource !== "user" });
+  }
 
   // Re-triage with Gemini vision on the newly attached photo!
   if (process.env.GEMINI_API_KEY) {

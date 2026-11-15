@@ -41,6 +41,12 @@
   .routed{color:var(--muted);font-size:14px;margin-top:10px}
   a.dash{display:block;text-align:center;color:var(--muted);margin-top:22px;font-size:14px}
   .spin{display:none;text-align:center;color:var(--muted);margin-top:14px}
+  .geo{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);padding:10px 12px;border-radius:12px;background:rgba(120,130,150,.1)}
+  .geo-dot{width:9px;height:9px;border-radius:50%;background:#c77700;flex:none;animation:pulse 1.2s infinite}
+  .geo.ok .geo-dot{background:var(--ok);animation:none}
+  .geo.err .geo-dot{background:var(--bad);animation:none}
+  .geo-btn{margin-left:auto;border:1px solid var(--gold);background:transparent;color:var(--ink);border-radius:8px;padding:4px 10px;font:600 12px inherit;cursor:pointer}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 </style>
 </head>
 <body>
@@ -58,8 +64,16 @@
     <label>What's wrong? <span style="text-transform:none;font-weight:400">(optional — AI reads the photo)</span></label>
     <textarea name="text" id="text" placeholder="e.g. water fountain leaking all over the floor, 2nd floor near the elevators"></textarea>
 
-    <label>Building</label>
-    <select name="buildingId" id="building"><option value="">Auto-detect from photo/text</option></select>
+    <label>Location</label>
+    <div class="geo" id="geo">
+      <span class="geo-dot" id="geo-dot"></span>
+      <span id="geo-text">Getting your location…</span>
+      <button type="button" class="geo-btn" id="geo-retry" hidden>Retry</button>
+    </div>
+    <input type="hidden" name="lat" id="lat" /><input type="hidden" name="lng" id="lng" /><input type="hidden" name="accuracy" id="accuracy" />
+
+    <label>Building <span style="text-transform:none;font-weight:400">(optional — GPS picks the nearest)</span></label>
+    <select name="buildingId" id="building"><option value="">Auto-detect from GPS / photo / text</option></select>
 
     <label>Where exactly? (optional)</label>
     <input type="text" name="location" id="location" placeholder="Room 1443 / 2nd floor hallway / outside main entrance" />
@@ -83,6 +97,25 @@ fetch("/api/buildings").then(r=>r.json()).then(bs=>{
     $("#building").appendChild(o);
   }
 });
+
+// Browser GPS: phones strip EXIF location from uploads, so ask the device directly.
+function locate() {
+  const g = $("#geo"); g.className = "geo"; $("#geo-retry").hidden = true;
+  $("#geo-text").textContent = "Getting your location…";
+  if (!navigator.geolocation) { geoFail("Location not supported on this device"); return; }
+  navigator.geolocation.getCurrentPosition(
+    (p) => {
+      $("#lat").value = p.coords.latitude; $("#lng").value = p.coords.longitude; $("#accuracy").value = Math.round(p.coords.accuracy);
+      g.classList.add("ok");
+      $("#geo-text").textContent = `📍 Location captured (±${Math.round(p.coords.accuracy)} m) — we'll pin this on the map`;
+    },
+    (err) => geoFail(err.code === 1 ? "Location blocked — pick a building below instead" : "Couldn't get location — pick a building below"),
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+  );
+}
+function geoFail(msg) { $("#geo").classList.add("err"); $("#geo-text").textContent = msg; $("#geo-retry").hidden = false; }
+$("#geo-retry").addEventListener("click", locate);
+locate();
 
 $("#photo").addEventListener("change", (e) => {
   const f = e.target.files[0];
@@ -141,6 +174,7 @@ function render(d) {
       <span class="pill ${r.urgency === "high" ? "high" : ""}">${r.urgency}</span>
       ${r.building ? `<span class="pill">${r.building.name}</span>` : ""}
     </div>
+    ${r.address ? `<p class="routed">📍 <b>${r.address}</b>${r.nearestBuilding ? ` · ${r.nearestBuilding.distanceMeters} m from ${r.nearestBuilding.name}` : ""} · <a href="${r.mapsUrl}" target="_blank" rel="noopener">map</a></p>` : ""}
     <p class="routed">📬 Routed to: <b>${d.routed.label}</b><br/><span style="font-size:13px">${d.routed.why}</span></p>`;
 }
 </script>

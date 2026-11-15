@@ -131,6 +131,7 @@ function renderList(){
         <span class="pill ${r.urgency==="emergency"?"em":r.urgency==="high"?"high":""}">${r.urgency}</span><span class="up">▲ ${r.upvotes}</span></div>
       <div class="t">${r.title}</div>
       <div class="m">${r.building? r.building.name + (r.building.number?` · Bldg ${r.building.number}`:"") : "Unknown building"}${r.location?` · ${r.location}`:""}</div>
+      ${r.gps ? `<div class="m">📍 <b>${r.address || `${r.gps.lat}, ${r.gps.lng}`}</b>${r.nearestBuilding && r.building?.id !== r.nearestBuilding.id ? ` · ${r.nearestBuilding.distanceMeters} m from ${r.nearestBuilding.name}` : ""}${r.gps.accuracy ? ` · ±${r.gps.accuracy} m` : ""} · <a href="${r.mapsUrl}" target="_blank" rel="noopener">map</a></div>` : `<div class="m" style="opacity:.7">📍 No GPS — ${r.buildingSource === "text" ? "building guessed from text" : r.buildingSource === "ai" ? "building guessed by AI" : r.buildingSource === "user" ? "building chosen by reporter" : "location unknown"}</div>`}
       <div class="m">${r.summary}</div>
       <div class="row">
         <span class="pill">${r.category}</span>
@@ -182,11 +183,17 @@ function initMap(){
 
 function renderMarkers(){
   layer.clearLayers();
-  for (const r of reports.filter(r=>r.building && r.status!=="resolved")){
+  for (const r of reports.filter(r=>(r.gps || r.building) && r.status!=="resolved")){
     const color = r.urgency==="emergency" ? "#c0392b" : r.urgency==="high" ? "#c77700" : "#003057";
-    L.circleMarker([r.building.lat, r.building.lng], {radius: 8 + Math.min(r.upvotes*2,14), color, fillColor:color, fillOpacity:.75})
-      .bindPopup(`<b>${r.title}</b><br>${r.building.name}<br>▲ ${r.upvotes} · ${r.category} · ${r.status}`)
+    // Exact GPS pin when we have one; building centroid otherwise.
+    const pos = r.gps ? [r.gps.lat, r.gps.lng] : [r.building.lat, r.building.lng];
+    const where = r.address || r.building?.name || "Pinned";
+    const exact = r.gps ? `<br><span style="color:#1f8a4c">📍 exact GPS${r.gps.accuracy?` ±${r.gps.accuracy} m`:""}</span>` : `<br><span style="color:#888">building center (no GPS)</span>`;
+    L.circleMarker(pos, {radius: 8 + Math.min(r.upvotes*2,14), color, fillColor:color, fillOpacity:.75, weight: r.gps ? 3 : 1})
+      .bindPopup(`<b>${r.title}</b><br>${where}${exact}<br>▲ ${r.upvotes} · ${r.category} · ${r.status}${r.mapsUrl?`<br><a href="${r.mapsUrl}" target="_blank">Open in Google Maps</a>`:""}`)
       .addTo(layer);
+    // Accuracy circle so techs know how tight the fix is.
+    if (r.gps?.accuracy && r.gps.accuracy < 150) L.circle(pos, {radius: r.gps.accuracy, color, weight:1, fillOpacity:.08}).addTo(layer);
   }
 }
 
