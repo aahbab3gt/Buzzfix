@@ -100,3 +100,20 @@ export function getLatestReportBySender(phone) {
   if (!phone) return null;
   return db.reports.find((r) => r.sender === phone);
 }
+
+// The report currently waiting on a location answer from this phone: either one they
+// opened, or one they were merged into as a subscriber. Most recently prompted first.
+export function getAwaitingReportForSender(phone) {
+  if (!phone) return null;
+  const involved = db.reports.filter(
+    (r) => r.awaitingLocation && (r.sender === phone || (Array.isArray(r.subscribers) && r.subscribers.includes(phone)))
+  );
+  involved.sort((a, b) => new Date(b.lastPromptAt || b.createdAt) - new Date(a.lastPromptAt || a.createdAt));
+  return involved[0] || null;
+}
+
+// Demo helper: wipe everything (reports, outbox, opt-outs) and restart ticket numbers.
+export function resetAll() {
+  db = { reports: [], outbox: [], counter: 1000 };
+  save();
+}

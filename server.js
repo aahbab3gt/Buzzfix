@@ -15,6 +15,8 @@ import {
   getReport,
   updateReport,
   getLatestReportBySender,
+  getAwaitingReportForSender,
+  resetAll,
   addOutbox,
   getOutbox,
   findDuplicate,
@@ -241,7 +243,11 @@ async function processReport({
   const contacts = isEmergency ? emergencyContacts(building?.type) : null;
 
   // Duplicate detection: same building + category, open, last 72h -> merge as upvote.
-  if (building && !isEmergency) {
+  // Only when we actually trust the building (user pick, GPS, or explicit text) and the
+  // category is specific. "other" + an AI-guessed building merged unrelated reports in testing.
+  const trustedBuilding = building && ["user", "gps", "text"].includes(buildingSource);
+  const specificCategory = ai.category && ai.category !== "other";
+  if (trustedBuilding && specificCategory && !isEmergency && process.env.DISABLE_DEDUPE !== "1") {
     const dup = findDuplicate(building.id, ai.category);
     if (dup) {
       dup.upvotes += 1;
@@ -406,7 +412,7 @@ Updates: Enabled (Reply STOP to opt out)</Message>
     // If this sender's latest report is still waiting on a location, a text-only
     // reply is the answer, whatever it says. We never turn it into a new ticket.
     if (numMedia === 0 && trimmed.length > 0) {
-      const recent = getLatestReportBySender(fromNumber);
+      const recent = getAwaitingReportForSender(fromNumber);
       if (recent && isAwaitingLocation(recent)) {
         const reply = await handleLocationReply(recent, bodyText);
         res.type("text/xml");
@@ -497,10 +503,13 @@ Updates: Enabled (Reply STOP to opt out)</Message>
     if (result.emergency) {
       replyMsg = `🚨 [BuzzFix EMERGENCY]\nUrgent hazard detected! Do not wait on a ticket.\nCALL NOW: ${result.emergency.call} (${result.emergency.note})\nLogged as ticket ${result.ticket}.\n📸 Add photo: ${photoLink}`;
     } else if (result.merged) {
+      // Even on a merge, if the ticket has no room/floor detail, this reporter can supply it.
+      const question = startLocationPrompt(result.report);
       replyMsg = `🐝 [BuzzFix] Already reported at ${result.report.building?.name || 'this location'}! You're the ${ordinal(result.report.upvotes)} person. We bumped ticket ${result.ticket} priority.\n` +
-                 `Status: ${(result.report.status || 'reported').replace('_', ' ').toUpperCase()}\n` +
-                 `We'll text you updates! (Reply STOP to opt out)\n` +
-                 `📸 Add photo for tech: ${photoLink}`;
+                 `Status: ${(result.report.status || 'reported').replace('_', ' ').toUpperCase()}` +
+                 question +
+                 `\nWe'll text you updates! (Reply STOP to opt out)` +
+                 (question ? "" : `\n📸 Add photo for tech: ${photoLink}`);
     } else {
       const bldgStr = result.building
         ? `${result.building.name}${result.building.number ? ` (Bldg #${result.building.number})` : ""}${result.report.address ? ` · ${result.report.address}` : ""}`
@@ -679,6 +688,13 @@ async function sendStatusUpdateSMS(report, newStatus, note = "") {
     }
   }
 }
+
+// Demo reset: POST /api/admin/reset?key=... (key = ADMIN_KEY env, default "buzz"). Clears all tickets.
+app.post("/api/admin/reset", (req, res) => {
+  if ((req.query.key || req.body?.key) !== (process.env.ADMIN_KEY || "buzz")) return res.status(403).json({ error: "bad key" });
+  resetAll();
+  res.json({ ok: true, message: "All reports cleared. Ticket numbers restart at GT-1001." });
+});
 
 app.get("/dashboard", (_req, res) => res.sendFile(path.join(__dirname, "public", "dashboard.html")));
 
