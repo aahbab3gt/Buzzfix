@@ -5,7 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import twilio from "twilio";
 import exifParser from "exif-parser";
-import { classify, GEMINI_MODEL, GEMINI_ENABLED } from "./classify.js";
+import { classify, parseLocationReply, GEMINI_MODEL, GEMINI_ENABLED } from "./classify.js";
 import { nearestBuilding, parseLatLng, reverseGeocode, mapsLink } from "./geo.js";
 import { route, draftEmail, emergencyContacts } from "./routing.js";
 import {
@@ -83,6 +83,80 @@ async function resolveLocation(gps) {
     addressFull: geo?.full || null,
     mapsUrl: mapsLink(gps.lat, gps.lng),
   };
+}
+
+// ── SMS location conversation ──────────────────────────────────────────────
+// A report "awaits location" until we have a building AND some room/floor detail,
+// or we've asked twice. Window: 20 min from the last message in the thread.
+const LOCATION_WINDOW_MS = 20 * 60 * 1000;
+
+function needsLocation(r) {
+  const hasBuilding = r.building && r.building.id !== "gps-pin";
+  return !hasBuilding || !(r.location && r.location.trim());
+}
+
+function isAwaitingLocation(r) {
+  if (!r.awaitingLocation) return false;
+  const last = new Date(r.lastPromptAt || r.createdAt).getTime();
+  return Date.now() - last < LOCATION_WINDOW_MS;
+}
+
+function locationQuestion(r) {
+  const hasBuilding = r.building && r.building.id !== "gps-pin";
+  const hasDetail = Boolean(r.location && r.location.trim());
+  if (!hasBuilding && hasDetail) return `Which building is that in?`;
+  if (!hasBuilding) return `Where is this? Reply with building + floor/room (e.g. "Klaus 2nd floor by the elevators").`;
+  return `Which floor or room in ${r.building.name}? (e.g. "3rd floor men's restroom")`;
+}
+
+// Mark a fresh report as waiting and return the question to append to the reply.
+function startLocationPrompt(r) {
+  if (!needsLocation(r)) return "";
+  r.awaitingLocation = true;
+  r.locationAsks = 1;
+  r.lastPromptAt = new Date().toISOString();
+  updateReport(r.id, r);
+  return `\n❓ ${locationQuestion(r)}`;
+}
+
+async function handleLocationReply(r, text) {
+  const parsed = await parseLocationReply(text, buildings.map((b) => b.name));
+  const b = matchBuilding(text) || matchBuilding(parsed.building_hint);
+  const hadBuilding = r.building && r.building.id !== "gps-pin";
+
+  if (b && (!hadBuilding || r.buildingSource !== "user")) {
+    r.building = slimBuilding(b);
+    r.buildingSource = "user";
+  }
+  // Keep the student's words, minus the building name/alias itself (that lives in r.building).
+  let detail = parsed.detail || text.trim();
+  if (b) {
+    for (const term of [b.name, ...(b.aliases || [])].sort((x, y) => y.length - x.length)) {
+      detail = detail.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), "");
+    }
+    detail = detail.replace(/^[\s,.\-–:]+|[\s,.\-–:]+$/g, "").replace(/\s{2,}/g, " ");
+    // Drop replies that were only filler around the building name ("it's in", "at the").
+    const filler = /^(it'?s|its|in|at|the|inside|near|building|bldg|on|campus|is)(\s+(it'?s|its|in|at|the|inside|near|building|bldg|on|campus|is))*$/i;
+    if (filler.test(detail)) detail = "";
+  }
+  if (detail) r.location = r.location ? `${r.location}, ${detail}` : detail;
+
+  const stillNeeds = needsLocation(r);
+  const asks = (r.locationAsks || 1);
+  if (stillNeeds && asks < 2) {
+    r.locationAsks = asks + 1;
+    r.lastPromptAt = new Date().toISOString();
+    r.awaitingLocation = true;
+    updateReport(r.id, r);
+    const got = r.building && r.building.id !== "gps-pin" ? `📍 ${r.building.name} noted.` : `📝 Noted: "${detail}".`;
+    return `🐝 [BuzzFix] ${got}\n❓ ${locationQuestion(r)}`;
+  }
+
+  r.awaitingLocation = false;
+  updateReport(r.id, r);
+  const where = [r.building && r.building.id !== "gps-pin" ? `${r.building.name}${r.building.number ? ` (Bldg #${r.building.number})` : ""}` : null, r.location]
+    .filter(Boolean).join(" · ");
+  return `🐝 [BuzzFix] Location saved for ${r.id}!\n📍 ${where || "Campus"}\nTechnicians can see it on the map now. We'll text you updates. (Reply STOP to opt out)`;
 }
 
 // Apply a resolved location onto a report (mutates). Only overrides the building if the report
@@ -328,29 +402,17 @@ Updates: Enabled (Reply STOP to opt out)</Message>
       }
     }
 
-    // Check if user is sending a location follow-up for a recent report that lacked a building
+    // ── Location conversation ────────────────────────────────────────────────
+    // If this sender's latest report is still waiting on a location, a text-only
+    // reply is the answer, whatever it says. We never turn it into a new ticket.
     if (numMedia === 0 && trimmed.length > 0) {
       const recent = getLatestReportBySender(fromNumber);
-      const isRecent = recent && (Date.now() - new Date(recent.createdAt).getTime() < 20 * 60 * 1000);
-      const matchedBldg = matchBuilding(trimmed);
-      if (recent && isRecent && (!recent.building || recent.building.id === "gps-pin") && matchedBldg) {
-        recent.building = {
-          id: matchedBldg.id,
-          name: matchedBldg.name,
-          number: matchedBldg.number,
-          type: matchedBldg.type,
-          lat: matchedBldg.lat,
-          lng: matchedBldg.lng,
-        };
-        recent.location = (recent.location ? `${recent.location}, ${trimmed}` : trimmed).trim();
-        updateReport(recent.id, recent);
-
+      if (recent && isAwaitingLocation(recent)) {
+        const reply = await handleLocationReply(recent, bodyText);
         res.type("text/xml");
         return res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Message>🐝 [BuzzFix] Location updated!
-📍 ${matchedBldg.name}${matchedBldg.number ? ` (Bldg #${matchedBldg.number})` : ""}
-Report ${recent.id} is now pinned on the facilities map.</Message>
+  <Message>${escapeXml(reply)}</Message>
 </Response>`);
       }
     }
@@ -443,15 +505,13 @@ Report ${recent.id} is now pinned on the facilities map.</Message>
       const bldgStr = result.building
         ? `${result.building.name}${result.building.number ? ` (Bldg #${result.building.number})` : ""}${result.report.address ? ` · ${result.report.address}` : ""}`
         : "GT Campus (Building unassigned)";
-      const bldgPrompt = !result.report.gps
-        ? `\n💡 Tap the link below to pin your exact location, or reply with the building name.`
-        : "";
+      const question = startLocationPrompt(result.report);
       replyMsg = `🐝 [BuzzFix] Report ${result.ticket} logged!\n` +
                  `📍 ${bldgStr}\n` +
                  `🔧 ${result.report.title}\n` +
-                 `Status: REPORTED (technicians notified)${bldgPrompt}\n` +
-                 `We'll text you when there is an update! (Reply STOP to opt out)\n` +
-                 `📸 Pin location / add photo:\n${photoLink}`;
+                 `Status: REPORTED (technicians notified)` +
+                 question +
+                 (question ? `\n(or tap to pin GPS: ${photoLink})` : `\nWe'll text you updates. (Reply STOP to opt out)\n📸 Add photo: ${photoLink}`);
     }
 
     res.type("text/xml");

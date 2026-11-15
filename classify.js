@@ -119,3 +119,38 @@ export async function classify({ text, photoPath, photoMime }) {
     return out;
   }
 }
+
+// Parse a free-text location reply ("klaus 2nd floor by the elevators") into
+// { building_hint, detail }. Gemini when available, otherwise a light heuristic.
+export async function parseLocationReply(text, buildingNames = []) {
+  const raw = (text || "").trim();
+  if (!raw) return { building_hint: null, detail: "" };
+
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const res = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [{
+          role: "user",
+          parts: [{
+            text:
+              `A Georgia Tech student is telling us WHERE a maintenance problem is. ` +
+              `Known buildings: ${buildingNames.join("; ")}.\n` +
+              `Return STRICT JSON only: {"building_hint": the matching building name from the list or null, ` +
+              `"detail": floor/room/landmark text a technician needs (e.g. "2nd floor, men's restroom by elevators"), or "" }.\n` +
+              `Student reply: "${raw}"`,
+          }],
+        }],
+      });
+      const out = res.text ?? res.response?.text?.() ?? "";
+      const j = JSON.parse(out.replace(/```json|```/g, "").trim());
+      return { building_hint: j.building_hint || null, detail: (j.detail || "").trim() };
+    } catch (err) {
+      console.error("parseLocationReply Gemini failed, using heuristic:", err.message);
+    }
+  }
+  // Heuristic: everything is detail; building matching happens via aliases in server.js.
+  return { building_hint: null, detail: raw };
+}
