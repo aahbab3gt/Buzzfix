@@ -5,7 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import twilio from "twilio";
 import exifParser from "exif-parser";
-import { classify } from "./classify.js";
+import { classify, GEMINI_MODEL, GEMINI_ENABLED } from "./classify.js";
 import { route, draftEmail, emergencyContacts } from "./routing.js";
 import {
   nextTicket,
@@ -104,6 +104,17 @@ function matchBuilding(input) {
 }
 
 app.get("/api/buildings", (_req, res) => res.json(buildings));
+
+// Lets the dashboard know what's actually live (so it never claims an SMS went out when it didn't).
+app.get("/api/config", (_req, res) =>
+  res.json({ smsEnabled: Boolean(twilioClient), geminiEnabled: GEMINI_ENABLED, geminiModel: GEMINI_MODEL })
+);
+
+function baseUrlFor(req) {
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  const proto = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
+  return `${proto}://${host}`;
+}
 
 // Core maintenance report processor used by both Web and SMS/WhatsApp intake
 async function processReport({
@@ -369,10 +380,7 @@ Report ${recent.id} is now pinned on the facilities map.</Message>
       sender: fromNumber,
     });
 
-    const host = req.headers["x-forwarded-host"] || req.headers.host;
-    const proto = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
-    const baseUrl = `${proto}://${host}`;
-    const photoLink = `${baseUrl}/add-photo?id=${result.ticket}`;
+    const photoLink = `${baseUrlFor(req)}/add-photo?id=${result.ticket}`;
 
     let replyMsg = "";
     if (result.emergency) {
@@ -407,7 +415,7 @@ Report ${recent.id} is now pinned on the facilities map.</Message>
     res.type("text/xml");
     res.send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Message>🐝 BuzzFix: Sorry, we had trouble processing that request. Please try again or report at http://localhost:3000</Message>
+  <Message>🐝 BuzzFix: Sorry, we had trouble processing that request. Please try again or report at ${baseUrlFor(req)}</Message>
 </Response>`);
   }
 });
@@ -493,7 +501,11 @@ async function sendStatusUpdateSMS(report, newStatus, note = "") {
     console.log("Twilio client not initialized, skipping status update SMS");
     return;
   }
-  const fromNum = process.env.TWILIO_PHONE_NUMBER || "+14705984404";
+  const fromNum = process.env.TWILIO_PHONE_NUMBER;
+  if (!fromNum) {
+    console.log("TWILIO_PHONE_NUMBER not set, skipping status update SMS");
+    return;
+  }
 
   // Get all unique reporters/subscribers for this issue who have not opted out
   const rawSubscribers = Array.isArray(report.subscribers) && report.subscribers.length > 0
@@ -547,7 +559,8 @@ app.listen(PORT, () => {
   • Dashboard    -> http://localhost:${PORT}/dashboard
   • SMS Webhook  -> http://localhost:${PORT}/api/sms (Twilio POST)
   • SMS Test URL -> http://localhost:${PORT}/api/sms/test
-  • Gemini AI    -> ${process.env.GEMINI_API_KEY ? "ON (" + (process.env.GEMINI_MODEL || "gemini-2.5-flash") + ")" : "OFF (keyword fallback)"}`);
+  • Gemini AI    -> ${GEMINI_ENABLED ? "ON (" + GEMINI_MODEL + ")" : "OFF (keyword fallback)"}
+  • Twilio SMS   -> ${twilioClient && process.env.TWILIO_PHONE_NUMBER ? "ON (" + process.env.TWILIO_PHONE_NUMBER + ")" : "OFF (status texts disabled)"}`);
 });
 
 function ordinal(n) {

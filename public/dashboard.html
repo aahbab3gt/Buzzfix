@@ -90,7 +90,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 const $ = (s)=>document.querySelector(s);
-let reports = [], map, layer;
+let reports = [], map, layer, config = { smsEnabled: false };
+fetch("/api/config").then(r=>r.json()).then(c=>{ config = c; }).catch(()=>{});
 
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>{
   document.querySelectorAll("nav button").forEach(x=>x.classList.remove("on"));
@@ -166,7 +167,8 @@ function showToast(msg){
 
 async function setStatus(id, status){
   await fetch(`/api/reports/${id}/status`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status})});
-  showToast(`✅ ${id} status updated to ${status.replace("_"," ").toUpperCase()} · Live SMS sent!`);
+  const label = status.replace("_"," ").toUpperCase();
+  showToast(config.smsEnabled ? `✅ ${id} → ${label} · reporters texted` : `✅ ${id} → ${label} · SMS off (no Twilio key)`);
   load();
 }
 

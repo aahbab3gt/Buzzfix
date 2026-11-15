@@ -68,6 +68,10 @@ export function fallbackClassify(text = "") {
   };
 }
 
+// Single source of truth for the model name (server.js logs it on startup).
+export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+export const GEMINI_ENABLED = Boolean(process.env.GEMINI_API_KEY);
+
 export async function classify({ text, photoPath, photoMime }) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return fallbackClassify(text);
@@ -75,7 +79,7 @@ export async function classify({ text, photoPath, photoMime }) {
   try {
     const { GoogleGenAI } = await import("@google/genai");
     const ai = new GoogleGenAI({ apiKey: key });
-    const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+    const model = GEMINI_MODEL;
 
     const parts = [];
     if (photoPath && fs.existsSync(photoPath)) {
