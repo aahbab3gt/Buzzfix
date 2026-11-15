@@ -182,15 +182,28 @@ function applyLocation(report, loc, { overrideBuilding = false } = {}) {
   return report;
 }
 
+// Whole-word matching so "red" doesn't match "reported" or "green" match "screen".
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const wordRe = (term) => new RegExp(`(^|[^a-z0-9])${escapeRe(term.toLowerCase())}($|[^a-z0-9])`, "i");
+const buildingTerms = buildings.map((b) => ({
+  b,
+  terms: [b.name, ...(b.aliases || [])].map((term) => ({ term, re: wordRe(term) })),
+}));
+
 function matchBuilding(input) {
   if (!input) return null;
-  const t = String(input).toLowerCase();
-  return (
-    buildings.find((b) => b.id.toLowerCase() === t) ||
-    buildings.find((b) => t.includes(b.name.toLowerCase())) ||
-    buildings.find((b) => b.aliases && b.aliases.some((a) => t.includes(a.toLowerCase()))) ||
-    null
-  );
+  const t = String(input).toLowerCase().trim();
+  const byId = buildings.find((b) => b.id.toLowerCase() === t);
+  if (byId) return byId;
+  // Longest matching term wins, so "west campus parking" beats a shorter overlap.
+  let best = null;
+  let bestLen = 0;
+  for (const { b, terms } of buildingTerms) {
+    for (const { term, re } of terms) {
+      if (term.length > bestLen && re.test(t)) { best = b; bestLen = term.length; }
+    }
+  }
+  return best;
 }
 
 app.get("/api/buildings", (_req, res) => res.json(buildings));
